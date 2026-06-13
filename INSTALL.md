@@ -1,0 +1,85 @@
+# CodeBuddy 记忆插件
+
+本插件旨在为 [CodeBuddy Code](https://www.codebuddy.ai/cli) 提供持久化的跨会话（session）记忆功能。只需安装一次，即可实现：在每次用户输入前自动召回相关记忆，在每轮对话结束后进行增量捕获，并在上下文压缩（compaction）前将完整记录提交给记忆抽取器。同时，该插件将 CodeBuddy 连接至 OpenViking 的 `/mcp` 端点，使模型能够直接调用 `search`、`store` 等工具来主动管理记忆。
+
+本项目灵感与实现借鉴自 OpenViking 官方的 [examples/codex-memory-plugin](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin)，是将 Codex 适配迁移到 CodeBuddy Code 的等价实现。
+
+博客：[动机与效果展示](https://blog.openviking.ai/post/openviking-coding-agent/)
+
+## 安装
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/JesuisTong/openviking-codebuddy-memory-plugin/main/setup-helper/install.sh)
+```
+
+脚本将自动检查依赖项、配置 OpenViking 连接并注册插件。安装过程的每一步均支持幂等操作，可安全地重复执行。
+
+安装完成后，请在当前终端激活 `codebuddy` 的封装函数（或新开一个终端窗口）：
+
+```bash
+source ~/.openviking/openviking-codebuddy-memory-plugin/setup-helper/wrapper.sh
+codebuddy              # 首次启动需进入 /hooks 完成一次审批
+```
+
+<details>
+<summary><b>手动安装</b></summary>
+
+前置条件：需安装 Node.js >= 22 与 CodeBuddy Code（`codebuddy` CLI）。CodeBuddy 的 hooks 功能在 `v1.16.0` 及以上版本中作为 Beta 提供，无需额外的 feature flag 即可在 `~/.codebuddy/settings.json` 中注册。
+
+1. **Shell 函数封装** — 在 shell 的配置文件（如 rc 文件）中追加一个 `codebuddy()` 函数，确保每次调用时都能从 `ovcli.conf` 注入 OpenViking 相关的环境变量。完整的函数代码请参考本仓库的 [`setup-helper/wrapper.sh`](./setup-helper/wrapper.sh)。
+
+2. **插件安装** — 注册本地 marketplace 并启用插件。具体执行命令请参见 [`setup-helper/install.sh`](./setup-helper/install.sh)。
+
+3. **占位符渲染** — 在将 `.mcp.json` 和 `hooks.json` 复制到 CodeBuddy 缓存目录时，需将其中的占位符替换为绝对路径或具体数值。自动化安装脚本会自动完成此操作；CodeBuddy 原生支持 `${CODEBUDDY_PLUGIN_ROOT}` 占位符，因此 `hooks.json` 无需手动替换。
+
+</details>
+
+## 验证
+
+```bash
+type codebuddy         # 期望输出：codebuddy is a shell function
+```
+
+> 若上一步输出的是一个路径而非 `shell function`，说明 wrapper 尚未生效，请先 `source` 那行 wrapper（或新开一个终端）再启动；否则 codebuddy 启动时 mcp服务无法connect。
+
+进入 CodeBuddy 后，插件将在每次用户输入前自动召回记忆。若设置环境变量 `OPENVIKING_DEBUG=1`，则会将相关事件日志写入 `~/.openviking/logs/codebuddy-hooks.log`。
+
+## 工作原理
+
+本插件深度挂载于 CodeBuddy Code 的生命周期之中：在每次用户输入前，它会搜索 OpenViking 并注入相关的记忆（触发 `UserPromptSubmit`）；在每轮对话结束后，会将新的对话追加至当前会话（触发 `Stop`）；在上下文压缩前，补齐并提交（commit）完整的对话记录（触发 `PreCompact`），以确保记忆抽取器能够在完整的上下文环境中运行。此外，在启动新会话时，插件还会自动清理前次运行遗留的孤儿会话（orphan session）。
+
+> **已知局限**：当通过 `SIGTERM`、`Ctrl+C` 退出 CodeBuddy 时，不会触发任何 hook（钩子）。遗留的孤儿会话将在下一次触发 `SessionStart` 时，通过闲置 TTL（生存时间，默认为 30 分钟）机制或活动窗口启发式策略进行回收清理。
+
+<details>
+<summary><b>配置</b></summary>
+
+配置优先级为：环境变量 > `ovcli.conf` > `ov.conf` > 内置默认值（默认 URL 为 `http://127.0.0.1:1933`，无鉴权）。
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `OPENVIKING_URL` / `OPENVIKING_BASE_URL` | — | 完整的服务器 URL |
+| `OPENVIKING_API_KEY` | — | API 密钥（将通过 `Authorization: Bearer` 标头发送） |
+| `OPENVIKING_CODEX_IDLE_TTL_MS` | `1800000` | `SessionStart` 闲置 TTL 清理阈值（毫秒） |
+| `OPENVIKING_DEBUG` | `false` | 是否将日志写入 `~/.openviking/logs/codebuddy-hooks.log` |
+
+更多调参说明（如 `OPENVIKING_RECALL_LIMIT`、`OPENVIKING_CAPTURE_ASSISTANT_TURNS` 等），请参考Openviking仓库的 [`tuning-the-plugin`](https://github.com/volcengine/OpenViking)。
+
+</details>
+
+## 故障排查
+
+| 现象 | 可能原因 | 修复方法 |
+|------|------|------|
+| `MCP server is not logged in` | 启动时环境变量中缺失 `OPENVIKING_API_KEY` | 确认已 source `codebuddy()` 函数，且 `ovcli.conf` 中配置了 `api_key` |
+| `type codebuddy` 显示的是路径而非 shell function（wrapper 未生效） | 安装后未 `source` rc，或在未加载该 rc 的终端里启动 | 执行 `source ~/.zshrc`（bash 用 `~/.bashrc`），或新开一个终端窗口 |
+| `N hooks need review` | 首次启动需要进行安全审批 | 在 CodeBuddy 终端内输入 `/hooks` 完成审批 |
+| 审批后仍提示 `hook (failed) exited with code 1` | 缓存文件中的占位符未被正确渲染 | 重新执行一次一键安装脚本 |
+| 召回结果为空 | 服务器不可达或 URL 配置错误 | 执行 `curl "$(jq -r '.url' ~/.openviking/ovcli.conf)/health"` 检查服务器状态 |
+| Hook 报 401 但 MCP 正常可用，或反之 | 环境变量与 `ovcli.conf` 的配置不一致 | Hook 每次触发均会重新读取 `ovcli.conf`，而 MCP 仅在启动时读取环境变量。请修改配置并重启 CodeBuddy。 |
+
+## 参见
+
+- [博客：在 Claude Code / Codex 中接入 OpenViking](https://blog.openviking.ai/post/openviking-coding-agent/) — 为什么以及如何给你的 Coding Agent 加上长期记忆
+- [插件 README](./README.md) — 完整的环境变量说明与架构图
+- [DESIGN.md](./DESIGN.md) — 提交（commit）决策树
+- [OpenViking 上游 Codex 插件](https://github.com/volcengine/OpenViking/tree/main/examples/codex-memory-plugin) — 本项目的灵感与初始实现来源

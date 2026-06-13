@@ -1,0 +1,21 @@
+{
+  "name": "openviking-memory",
+  "version": "0.6.0",
+  "description": "Long-term semantic memory for CodeBuddy Code, powered by OpenViking. Recall on UserPromptSubmit, incremental add_message on Stop (per turn), commit on PreCompact and SessionEnd.",
+  "author": {
+    "name": "OpenViking",
+    "url": "https://github.com/volcengine/OpenViking"
+  },
+  "repository": "https://github.com/volcengine/OpenViking",
+  "license": "Apache-2.0",
+  "keywords": [
+    "memory",
+    "openviking",
+    "semantic-search",
+    "long-term-memory",
+    "context-engine",
+    "codebuddy"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}
