@@ -3,3 +3,4 @@ servers/*.mjs
 servers/*.js
 !servers/memory-server.js
 *.tsbuildinfo
+.DS_Store

@@ -13,8 +13,54 @@ DEFAULT_OPENVIKING_URL="http://127.0.0.1:1933"
 MARKETPLACE_NAME="openviking-plugins-local"
 PLUGIN_NAME="openviking-memory"
 
+# Walk up from $PWD looking for a project-local ovcli.conf. Echoes the
+# absolute path of the first match, or nothing. Mirrors the walker in
+# scripts/ov-credentials.mjs: candidates per dir are "ovcli.conf" then
+# ".openviking/ovcli.conf"; stops at $HOME; capped at 16 hops. Set
+# OPENVIKING_DISABLE_REPO_CONFIG=1 to opt out; set OPENVIKING_REPO_CONFIG_FILE
+# to bypass the walk and pin to a specific file.
+_openviking_find_repo_conf() {
+  local _ov_disabled="${OPENVIKING_DISABLE_REPO_CONFIG:-}"
+  case "$_ov_disabled" in
+    ""|0|false|False|FALSE) : ;;
+    *) return 0 ;;
+  esac
+  if [ -n "${OPENVIKING_REPO_CONFIG_FILE:-}" ]; then
+    [ -f "$OPENVIKING_REPO_CONFIG_FILE" ] && printf '%s\n' "$OPENVIKING_REPO_CONFIG_FILE"
+    return 0
+  fi
+  local _ov_dir="${PWD:-.}" _ov_home="" _ov_i=0 _ov_candidate _ov_parent
+  if [ -n "${HOME:-}" ]; then
+    _ov_home=$(cd "$HOME" 2>/dev/null && pwd -P) || _ov_home="$HOME"
+  fi
+  while [ "$_ov_i" -lt 16 ]; do
+    for _ov_candidate in "$_ov_dir/ovcli.conf" "$_ov_dir/.openviking/ovcli.conf"; do
+      if [ -f "$_ov_candidate" ]; then
+        printf '%s\n' "$_ov_candidate"
+        return 0
+      fi
+    done
+    [ -n "$_ov_home" ] && [ "$_ov_dir" = "$_ov_home" ] && return 0
+    _ov_parent=$(cd "$_ov_dir/.." 2>/dev/null && pwd -P)
+    [ -z "$_ov_parent" ] || [ "$_ov_parent" = "$_ov_dir" ] && return 0
+    _ov_dir="$_ov_parent"
+    _ov_i=$((_ov_i + 1))
+  done
+  return 0
+}
+
 _openviking_codebuddy_exec() {
   local _ov_conf="${OPENVIKING_CLI_CONFIG_FILE:-$HOME/.openviking/ovcli.conf}"
+  # Resolve a repo-local conf from cwd if the user hasn't pinned one
+  # explicitly. The repo conf wins over the default, so launching codex
+  # from inside a project with a project-scoped identity just works.
+  local _ov_repo_conf=""
+  if [ -z "${OPENVIKING_CLI_CONFIG_FILE:-}" ]; then
+    _ov_repo_conf=$(_openviking_find_repo_conf)
+    if [ -n "$_ov_repo_conf" ]; then
+      _ov_conf="$_ov_repo_conf"
+    fi
+  fi
   if ! command -v node >/dev/null 2>&1; then
     command "$@"
     return

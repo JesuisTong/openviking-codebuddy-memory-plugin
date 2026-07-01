@@ -148,7 +148,7 @@ export function loadConfig() {
   const configPath = cliPath || ovPath || null;
 
   const server = ovFile.server || {};
-  const cx = ovFile.codebuddy || {};
+  const cx = cliFile.codebuddy || {};
 
   const baseUrl = deriveBaseUrl({ cliFile, ovFile });
 
